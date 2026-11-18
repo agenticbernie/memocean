@@ -32,16 +32,26 @@ services:
         sync: false
       - key: KEK_V1_BASE64
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: LLM_API_KEY
         sync: false
-      - key: ANTHROPIC_MODEL
-        value: claude-opus-5-5
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
       - key: EMBEDDING_API_KEY
         sync: false
+      - key: EMBEDDING_BASE_URL
+        sync: false
       - key: EMBEDDING_MODEL
-        value: voyage-3.5-lite
+        value: text-embedding-3-small
       - key: EMBEDDING_DIMENSIONS
         value: "1024"
+      - key: OPENROUTER_HTTP_REFERER
+        sync: false
+      - key: OPENROUTER_APP_NAME
+        sync: false
       - key: AVALANCHE_RPC_URL
         value: https://api.avax-test.network/ext/bc/C/rpc
       - key: CHAIN_ID

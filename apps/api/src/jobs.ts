@@ -123,7 +123,7 @@ export class JobWorker {
       await ensureLease(tx, job);
       const revision = (await tx.query('SELECT id FROM memory_revisions WHERE memory_id=$1 AND revision=$2 AND artifact_id=$3', [job.payload.memory_id, job.payload.revision, row.id])).rows[0];
       if (!revision) throw new ApiError('EVIDENCE_INVALID', 'Revision mapping is missing', 409);
-      for (let i = 0; i < chunks.length; i++) await tx.query("INSERT INTO memory_chunks(tenant_id,revision_id,ordinal,locator,sanitized_text,embedding,embedding_model) VALUES($1,$2,$3,$4,$5,$6::vector,'voyage-3.5-lite') ON CONFLICT(revision_id,ordinal) DO NOTHING", [job.tenant_id, revision.id, i, chunks[i]!.locator, chunks[i]!.text, `[${vectors[i]!.join(',')}]`]);
+      for (let i = 0; i < chunks.length; i++) await tx.query("INSERT INTO memory_chunks(tenant_id,revision_id,ordinal,locator,sanitized_text,embedding,embedding_model) VALUES($1,$2,$3,$4,$5,$6::vector,$7) ON CONFLICT(revision_id,ordinal) DO NOTHING", [job.tenant_id, revision.id, i, chunks[i]!.locator, chunks[i]!.text, `[${vectors[i]!.join(',')}]`, this.config.EMBEDDING_MODEL]);
       await tx.query("UPDATE artifacts SET state='indexed',indexed_payload_sha256=$2 WHERE id=$1 AND state IN ('verified','indexed')", [row.id, sha256(canonical(lesson))]);
       await tx.query("UPDATE jobs SET state='succeeded',result=$3,lease_until=NULL,last_error=NULL WHERE id=$1 AND lease_token=$2 AND lease_until>now()", [job.id, job.lease_token, { memory_id: job.payload.memory_id, artifact_id: row.id }]);
       await tx.query('UPDATE outbox SET published_at=now() WHERE aggregate_id=$1 AND published_at IS NULL', [job.id]);

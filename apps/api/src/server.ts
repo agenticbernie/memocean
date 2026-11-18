@@ -2,7 +2,7 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { Database } from './db.js';
 import { CryptoBox } from './security.js';
-import { IrysStorage, VoyageEmbedding } from './providers.js';
+import { IrysStorage, OpenAICompatibleEmbedding } from './providers.js';
 import { JobWorker } from './jobs.js';
 import { AvalancheReader, MarketplaceIndexer } from './chain.js';
 
@@ -12,7 +12,7 @@ let worker: JobWorker | undefined, workerDb: Database | undefined, chainTimer: N
 if (config.ENABLE_WORKER === 'true') {
   if (!config.WORKER_DATABASE_URL || config.WORKER_DATABASE_URL === config.DATABASE_URL) throw new Error('A separate WORKER_DATABASE_URL is required to enable background jobs');
   workerDb = new Database(config.WORKER_DATABASE_URL);
-  worker = new JobWorker(workerDb, new CryptoBox(config.KEK_V1_BASE64), new IrysStorage(), new VoyageEmbedding(config), config);
+  worker = new JobWorker(workerDb, new CryptoBox(config.KEK_V1_BASE64), new IrysStorage(), new OpenAICompatibleEmbedding(config), config);
   worker.start();
   if (config.AVALANCHE_RPC_URL) {
     const indexer = new MarketplaceIndexer(workerDb, new AvalancheReader(config.AVALANCHE_RPC_URL), config);

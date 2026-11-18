@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { loadConfig, readinessConfig, type Config } from './config.js';
 import { Database, authorizeProject, requireScope } from './db.js';
 import { ApiError, CryptoBox, publicError } from './security.js';
-import { AnthropicGeneration, IrysStorage, VoyageEmbedding, type GenerationProvider, type EmbeddingProvider, type StorageProvider } from './providers.js';
+import { OpenAICompatibleGeneration, IrysStorage, OpenAICompatibleEmbedding, type GenerationProvider, type EmbeddingProvider, type StorageProvider } from './providers.js';
 import { AuthService } from './auth.js';
 import { DraftService } from './drafts.js';
 import { RagService } from './rag.js';
@@ -20,7 +20,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   const config = options.config ?? loadConfig();
   const db = options.db ?? new Database(config.DATABASE_URL);
   const box = new CryptoBox(config.KEK_V1_BASE64);
-  const generation = options.generation ?? new AnthropicGeneration(config), embeddings = options.embeddings ?? new VoyageEmbedding(config), storage = options.storage ?? new IrysStorage();
+  const generation = options.generation ?? new OpenAICompatibleGeneration(config), embeddings = options.embeddings ?? new OpenAICompatibleEmbedding(config), storage = options.storage ?? new IrysStorage();
   const auth = new AuthService(db, config), drafts = new DraftService(db, box, generation, config), rag = new RagService(db, embeddings, generation, box, config), resources = new ResourceService(db, box, storage, config);
   const app = Fastify({ bodyLimit: 256 * 1024, requestTimeout: 60000, connectionTimeout: 10000, keepAliveTimeout: 5000, maxParamLength: 512, trustProxy: false, genReqId: () => randomUUID(), disableRequestLogging: true, logger: options.logger ? { level: 'info', redact: { paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]', 'headers.authorization', 'body', 'query', '*.token', '*.approval_token', '*.signature', '*.nonce', '*.sanitized_text', '*.question', '*.message'], censor: '[REDACTED]' }, serializers: { req: (req: any) => ({ method: req.method }), res: (res: any) => ({ statusCode: res.statusCode }) } } : false });
   await app.register(cors, { origin: config.WEB_ORIGIN, methods: ['GET', 'POST', 'DELETE', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type', 'MCP-Protocol-Version', 'Mcp-Method', 'Mcp-Name', 'Accept'], credentials: false, strictPreflight: true });

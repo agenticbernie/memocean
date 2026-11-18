@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+const providerBaseUrl = z.string().url().refine((value) => {
+  const url = new URL(value);
+  return !url.username && !url.password && !url.search && !url.hash && (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)));
+}, 'Provider base URL must use HTTPS (HTTP is allowed only for localhost)');
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -12,11 +17,16 @@ const envSchema = z.object({
   CHAIN_ID: z.coerce.number().int().positive().default(43113),
   TOKEN_HASH_PEPPER: z.string().min(32).optional(),
   KEK_V1_BASE64: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  ANTHROPIC_MODEL: z.string().min(1).default('claude-opus-5-5'),
+  LLM_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  LLM_BASE_URL: providerBaseUrl.default('https://api.openai.com/v1'),
+  LLM_MODEL: z.string().min(1).default('gpt-4o-mini'),
   EMBEDDING_API_KEY: z.string().min(1).optional(),
-  EMBEDDING_MODEL: z.literal('voyage-3.5-lite').default('voyage-3.5-lite'),
+  EMBEDDING_BASE_URL: providerBaseUrl.optional(),
+  EMBEDDING_MODEL: z.string().min(1).default('text-embedding-3-small'),
   EMBEDDING_DIMENSIONS: z.coerce.number().pipe(z.literal(1024)).default(1024),
+  OPENROUTER_HTTP_REFERER: z.string().url().optional(),
+  OPENROUTER_APP_NAME: z.string().min(1).optional(),
   JOB_CONCURRENCY: z.coerce.number().int().min(1).max(2).default(2),
   USER_DAILY_MODEL_LIMIT: z.coerce.number().int().positive().default(100),
   GLOBAL_DAILY_MODEL_LIMIT: z.coerce.number().int().positive().default(1000),

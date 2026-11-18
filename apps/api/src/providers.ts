@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import type { Config } from './config.js';
 import { ApiError, scanText, sha256, equal } from './security.js';
@@ -9,24 +8,63 @@ export interface GenerationProvider {
   distill(sanitizedCandidate: { title: string; sanitized_text: string }, signal?: AbortSignal): Promise<Lesson>;
   answer(question: string, evidence: Array<{ chunk_id: string; text: string }>, signal?: AbortSignal): Promise<z.infer<typeof generatedAnswerSchema>>;
 }
-export class AnthropicGeneration implements GenerationProvider {
+const chatCompletionResponse = z.object({
+  choices: z.array(z.object({
+    finish_reason: z.string().nullable(),
+    message: z.object({ content: z.string().nullable() }),
+  })).min(1),
+});
+const embeddingResponse = z.object({
+  data: z.array(z.object({ index: z.number().int(), embedding: z.array(z.number().finite()).length(1024) })),
+});
+function providerHeaders(apiKey: string, config: Config): Headers {
+  const headers = new Headers({ Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' });
+  if (config.OPENROUTER_HTTP_REFERER) headers.set('HTTP-Referer', config.OPENROUTER_HTTP_REFERER);
+  if (config.OPENROUTER_APP_NAME) headers.set('X-Title', config.OPENROUTER_APP_NAME);
+  return headers;
+}
+function providerUrl(baseUrl: string, endpoint: 'chat/completions' | 'embeddings'): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${endpoint}`;
+}
+function upstreamError(error: unknown, signal: AbortSignal | undefined, operation: string, retryable: boolean): ApiError {
+  if (signal?.aborted) return new ApiError('UPSTREAM_UNAVAILABLE', `${operation} request was cancelled`, 503, true);
+  if (error instanceof Error && error.name === 'TimeoutError') return new ApiError('UPSTREAM_UNAVAILABLE', `${operation} provider timed out`, 503, true);
+  return new ApiError('UPSTREAM_UNAVAILABLE', `${operation} provider could not return a valid response`, 503, retryable);
+}
+
+export class OpenAICompatibleGeneration implements GenerationProvider {
   readonly configured: boolean;
-  private readonly client?: Anthropic;
+  private readonly apiKey?: string;
   constructor(private readonly config: Config) {
-    this.configured = Boolean(config.ANTHROPIC_API_KEY);
-    if (config.ANTHROPIC_API_KEY) this.client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 45000 });
+    this.apiKey = config.LLM_API_KEY ?? config.OPENAI_API_KEY;
+    this.configured = Boolean(this.apiKey);
   }
   private async json(system: string, data: unknown, signal?: AbortSignal): Promise<unknown> {
-    if (!this.client) throw new ApiError('INTEGRATION_UNAVAILABLE', 'Anthropic generation is not configured', 503);
+    if (!this.apiKey) throw new ApiError('INTEGRATION_UNAVAILABLE', 'LLM provider is not configured', 503);
     try {
-      const message = await this.client.messages.create({ model: this.config.ANTHROPIC_MODEL, max_tokens: 6000, thinking: { type: 'adaptive' }, system, messages: [{ role: 'user', content: JSON.stringify({ untrusted_data: data }) }] }, { signal });
-      if (message.stop_reason !== 'end_turn') throw new ApiError('EVIDENCE_INVALID', 'Generation did not finish within its response budget', 502);
-      const text = message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
-      if (Buffer.byteLength(text) > 65536) throw new Error('Output too large');
-      return JSON.parse(text);
+      const response = await fetch(providerUrl(this.config.LLM_BASE_URL, 'chat/completions'), {
+        method: 'POST',
+        headers: providerHeaders(this.apiKey, this.config),
+        body: JSON.stringify({
+          model: this.config.LLM_MODEL,
+          max_tokens: 6000,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: JSON.stringify({ untrusted_data: data }) },
+          ],
+        }),
+        signal: AbortSignal.any([AbortSignal.timeout(45000), ...(signal ? [signal] : [])]),
+      });
+      if (!response.ok) throw new ApiError('UPSTREAM_UNAVAILABLE', 'LLM provider rejected the request', 503, response.status === 429 || response.status >= 500);
+      const parsed = chatCompletionResponse.parse(await response.json());
+      const choice = parsed.choices[0]!;
+      if (choice.finish_reason !== 'stop' || choice.message.content === null) throw new ApiError('EVIDENCE_INVALID', 'Generation did not finish within its response budget', 502);
+      if (Buffer.byteLength(choice.message.content) > 65536) throw new ApiError('EVIDENCE_INVALID', 'Generation output exceeds the response limit', 502);
+      return JSON.parse(choice.message.content);
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw new ApiError('UPSTREAM_UNAVAILABLE', 'Generation provider could not return a validated response', 503, false);
+      throw upstreamError(error, signal, 'LLM', false);
     }
   }
   async distill(candidate: { title: string; sanitized_text: string }, signal?: AbortSignal): Promise<Lesson> {
@@ -42,23 +80,36 @@ export class AnthropicGeneration implements GenerationProvider {
   }
 }
 export interface EmbeddingProvider { readonly configured: boolean; embed(texts: string[], kind: 'query' | 'document', signal?: AbortSignal): Promise<number[][]> }
-const voyageResponse = z.object({ data: z.array(z.object({ index: z.number().int(), embedding: z.array(z.number().finite()).length(1024) })) });
-export class VoyageEmbedding implements EmbeddingProvider {
+export class OpenAICompatibleEmbedding implements EmbeddingProvider {
   readonly configured: boolean;
-  constructor(private readonly config: Config) { this.configured = Boolean(config.EMBEDDING_API_KEY); }
-  async embed(texts: string[], kind: 'query' | 'document', signal?: AbortSignal): Promise<number[][]> {
-    if (!this.config.EMBEDDING_API_KEY) throw new ApiError('INTEGRATION_UNAVAILABLE', 'Voyage embeddings are not configured', 503);
+  private readonly apiKey?: string;
+  private readonly baseUrl: string;
+  constructor(private readonly config: Config) {
+    this.apiKey = config.EMBEDDING_API_KEY ?? config.LLM_API_KEY ?? config.OPENAI_API_KEY;
+    this.baseUrl = config.EMBEDDING_BASE_URL ?? config.LLM_BASE_URL;
+    this.configured = Boolean(this.apiKey);
+  }
+  async embed(texts: string[], _kind: 'query' | 'document', signal?: AbortSignal): Promise<number[][]> {
+    if (!this.apiKey) throw new ApiError('INTEGRATION_UNAVAILABLE', 'Embedding provider is not configured', 503);
     if (!texts.length || texts.length > 32) throw new ApiError('INVALID_INPUT', 'Embedding batch must contain 1–32 texts');
     texts.forEach(scanText);
     try {
-      const response = await fetch('https://api.voyageai.com/v1/embeddings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.EMBEDDING_API_KEY}` }, body: JSON.stringify({ model: this.config.EMBEDDING_MODEL, input: texts, input_type: kind, output_dimension: 1024, truncation: false }), signal: AbortSignal.any([AbortSignal.timeout(20000), ...(signal ? [signal] : [])]) });
-      if (!response.ok) throw new Error('Embedding service rejected request');
-      const parsed = voyageResponse.parse(await response.json());
+      const response = await fetch(providerUrl(this.baseUrl, 'embeddings'), {
+        method: 'POST',
+        headers: providerHeaders(this.apiKey, this.config),
+        body: JSON.stringify({ model: this.config.EMBEDDING_MODEL, input: texts, dimensions: this.config.EMBEDDING_DIMENSIONS }),
+        signal: AbortSignal.any([AbortSignal.timeout(20000), ...(signal ? [signal] : [])]),
+      });
+      if (!response.ok) throw new ApiError('UPSTREAM_UNAVAILABLE', 'Embedding provider rejected the request', 503, response.status === 429 || response.status >= 500);
+      const parsed = embeddingResponse.parse(await response.json());
       if (parsed.data.length !== texts.length) throw new Error('Embedding response count mismatch');
       const result = [...parsed.data].sort((a, b) => a.index - b.index);
-      if (result.some((v, i) => v.index !== i)) throw new Error('Invalid embedding ordering');
-      return result.map((v) => v.embedding);
-    } catch { throw new ApiError('UPSTREAM_UNAVAILABLE', 'Embedding provider could not return valid 1024-dimensional vectors', 503, true); }
+      if (result.some((value, index) => value.index !== index)) throw new Error('Invalid embedding ordering');
+      return result.map((value) => value.embedding);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw upstreamError(error, signal, 'Embedding', true);
+    }
   }
 }
 export interface UploadResult { id: string; response: Record<string, unknown>; network: string; storageProduct: string; gatewayBaseUrl: string }

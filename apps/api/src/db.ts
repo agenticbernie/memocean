@@ -24,7 +24,7 @@ export class Database {
     finally { client.release(); }
   }
   async ready(): Promise<boolean> {
-    const result = await this.query<{ safe: boolean; migrated: boolean }>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND NOT pg_has_role(current_user,'memocean_worker','MEMBER') AND NOT EXISTS(SELECT 1 FROM pg_class c WHERE c.relname='artifacts' AND c.relnamespace='public'::regnamespace AND pg_has_role(current_user,c.relowner,'MEMBER')) AS safe, (SELECT count(*)=5 FROM schema_migrations WHERE name IN ('001_initial.sql','002_security.sql','003_invariants.sql','004_operations.sql','005_request_rate_limit_atomic.sql')) AS migrated FROM pg_roles r WHERE r.rolname=current_user`);
+    const result = await this.query<{ safe: boolean; migrated: boolean }>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND NOT pg_has_role(current_user,'memocean_worker','MEMBER') AND NOT EXISTS(SELECT 1 FROM pg_class c WHERE c.relname='artifacts' AND c.relnamespace='public'::regnamespace AND pg_has_role(current_user,c.relowner,'MEMBER')) AS safe, (SELECT count(*)=6 FROM schema_migrations WHERE name IN ('001_initial.sql','002_security.sql','003_invariants.sql','004_operations.sql','005_request_rate_limit_atomic.sql','006_openai_embedding_models.sql')) AS migrated FROM pg_roles r WHERE r.rolname=current_user`);
     return result.rows[0]?.safe === true && result.rows[0]?.migrated === true;
   }
   async close(): Promise<void> { await this.pool?.end(); }

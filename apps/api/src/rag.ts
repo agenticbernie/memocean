@@ -60,15 +60,15 @@ export class RagService {
       const result = await tx.query(`WITH authorized AS MATERIALIZED (
         SELECT c.id,c.locator,c.sanitized_text,c.embedding,r.importance,a.id AS artifact_id,a.cipher_sha256,tx.tx_id,tx.gateway_base_url,NULL::uuid AS capsule_version_id
         FROM memory_chunks c JOIN memory_revisions r ON r.id=c.revision_id AND r.tenant_id=c.tenant_id JOIN memories m ON m.id=r.memory_id AND m.tenant_id=r.tenant_id JOIN artifacts a ON a.id=r.artifact_id AND a.tenant_id=r.tenant_id JOIN irys_transactions tx ON tx.artifact_id=a.id
-        WHERE c.tenant_id=$1 AND m.project_id=$2 AND app_project(m.project_id,m.tenant_id) AND m.archived_at IS NULL AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256
+        WHERE c.tenant_id=$1 AND c.embedding_model=$10 AND m.project_id=$2 AND app_project(m.project_id,m.tenant_id) AND m.archived_at IS NULL AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256
         AND r.valid_from<=$4::timestamptz AND (r.valid_to IS NULL OR r.valid_to>$4::timestamptz) AND ($5::timestamptz IS NULL OR r.created_at>=$5) AND ($6::timestamptz IS NULL OR r.created_at<$6)
         UNION ALL
         SELECT c.id,c.locator,c.sanitized_text,c.embedding,0.5::numeric,a.id,a.cipher_sha256,tx.tx_id,tx.gateway_base_url,v.id
         FROM project_capsules pc JOIN entitlements e ON e.id=pc.entitlement_id AND e.user_id=pc.user_id AND e.capsule_version_id=pc.capsule_version_id JOIN capsule_versions v ON v.id=pc.capsule_version_id JOIN capsule_chunks c ON c.capsule_version_id=v.id JOIN artifacts a ON a.id=v.artifact_id JOIN irys_transactions tx ON tx.artifact_id=a.id
-        WHERE pc.tenant_id=$1 AND pc.project_id=$2 AND pc.user_id=$3 AND e.user_id=$3 AND app_entitled(v.id) AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.permanence_verified AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256 AND v.review_state='approved'
+        WHERE pc.tenant_id=$1 AND c.embedding_model=$10 AND pc.project_id=$2 AND pc.user_id=$3 AND e.user_id=$3 AND app_entitled(v.id) AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.permanence_verified AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256 AND v.review_state='approved'
         AND v.created_at<=$4::timestamptz AND ($5::timestamptz IS NULL OR v.created_at>=$5) AND ($6::timestamptz IS NULL OR v.created_at<$6)
       ), ranked AS (SELECT *,1-(embedding<=>$7::vector) AS similarity FROM authorized)
-      SELECT * FROM ranked WHERE similarity>=0.25 AND ($8::double precision IS NULL OR similarity<$8 OR (similarity=$8 AND id>$9::uuid)) ORDER BY similarity DESC,id ASC LIMIT $10`, [p.tenantId, input.project_id, p.userId, effectiveAt, input.created_from ?? null, input.created_to ?? null, `[${vector.join(',')}]`, cursor?.score ?? null, cursor?.id ?? null, input.limit + 1]);
+      SELECT * FROM ranked WHERE similarity>=0.25 AND ($8::double precision IS NULL OR similarity<$8 OR (similarity=$8 AND id>$9::uuid)) ORDER BY similarity DESC,id ASC LIMIT $11`, [p.tenantId, input.project_id, p.userId, effectiveAt, input.created_from ?? null, input.created_to ?? null, `[${vector.join(',')}]`, cursor?.score ?? null, cursor?.id ?? null, this.config.EMBEDDING_MODEL, input.limit + 1]);
       return result.rows.map(evidenceFromRow);
     });
     const more = items.length > input.limit; const page = items.slice(0, input.limit), last = page.at(-1);
@@ -106,7 +106,7 @@ export class RagService {
     if (input.mode === 'purchased') {
       const access = (await tx.query('SELECT app_entitled($1) AS allowed', [input.capsule_version_id])).rows[0]?.allowed;
       if (!access) throw new ApiError('FORBIDDEN', 'A fresh confirmed buyer-specific entitlement for this exact version is required', 403);
-      const result = await tx.query("SELECT c.*,a.id AS artifact_id,a.cipher_sha256,tx.tx_id,tx.gateway_base_url,v.id AS capsule_version_id FROM capsule_chunks c JOIN capsule_versions v ON v.id=c.capsule_version_id JOIN artifacts a ON a.id=v.artifact_id JOIN irys_transactions tx ON tx.artifact_id=a.id WHERE c.capsule_version_id=$1 AND app_entitled(v.id) AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.permanence_verified AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256 ORDER BY c.ordinal LIMIT 12", [input.capsule_version_id]);
+      const result = await tx.query("SELECT c.*,a.id AS artifact_id,a.cipher_sha256,tx.tx_id,tx.gateway_base_url,v.id AS capsule_version_id FROM capsule_chunks c JOIN capsule_versions v ON v.id=c.capsule_version_id JOIN artifacts a ON a.id=v.artifact_id JOIN irys_transactions tx ON tx.artifact_id=a.id WHERE c.capsule_version_id=$1 AND c.embedding_model=$2 AND app_entitled(v.id) AND a.state='indexed' AND tx.verified_at IS NOT NULL AND tx.permanence_verified AND tx.verified_cipher_sha256=a.cipher_sha256 AND tx.verified_manifest_sha256=a.manifest_sha256 ORDER BY c.ordinal LIMIT 12", [input.capsule_version_id, this.config.EMBEDDING_MODEL]);
       return { items: result.rows.map(evidenceFromRow), maxChars: 6000 };
     }
     // This query cannot read capsule_chunks or the paid artifact: only the independently approved derivative.

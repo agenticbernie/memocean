@@ -22,7 +22,7 @@ test('PostgreSQL pgvector/RLS/100-way quota concurrency/lease fencing integratio
   // The disposable test login must be able to SET LOCAL ROLE to emulate the request connection.
   // This needs CREATEROLE/admin ownership and deliberately cannot run against a shared database.
   await admin.query('GRANT memocean_request,memocean_worker TO CURRENT_USER');
-  const applied = await migrate(url); assert.equal(applied.length, 5); assert.deepEqual(await migrate(url), []);
+  const applied = await migrate(url); assert.equal(applied.length, 6); assert.deepEqual(await migrate(url), []);
   assert.ok((await admin.query("SELECT extversion FROM pg_extension WHERE extname='vector'")).rows[0]?.extversion);
   class RequestDb extends Database {
     override async transaction<T>(p: Principal | null, fn: (tx: Tx) => Promise<T>): Promise<T> {
@@ -72,7 +72,8 @@ test('PostgreSQL pgvector/RLS/100-way quota concurrency/lease fencing integratio
     const artifactId = await artifact(fixture.principal.tenantId, fixture.principal.userId), memoryId = randomUUID(), revisionId = randomUUID();
     await admin.query('INSERT INTO memories(id,tenant_id,project_id,created_by) VALUES($1,$2,$3,$4)', [memoryId, fixture.principal.tenantId, fixture.projectId, fixture.principal.userId]);
     await admin.query("INSERT INTO memory_revisions(id,memory_id,tenant_id,revision,artifact_id,schema_version,importance,valid_from) VALUES($1,$2,$3,1,$4,'1.0',0.9,'2026-01-01T00:00:00Z')", [revisionId, memoryId, fixture.principal.tenantId, artifactId]);
-    await admin.query("INSERT INTO memory_chunks(tenant_id,revision_id,ordinal,locator,sanitized_text,embedding,embedding_model) VALUES($1,$2,0,'/rules/0/statement',$3,$4::vector,'voyage-3.5-lite')", [fixture.principal.tenantId, revisionId, text, vectorSql]);
+    await admin.query('INSERT INTO memory_chunks(tenant_id,revision_id,ordinal,locator,sanitized_text,embedding,embedding_model) VALUES($1,$2,0,\'/rules/0/statement\',$3,$4::vector,$5)', [fixture.principal.tenantId, revisionId, text, vectorSql, config.EMBEDDING_MODEL]);
+    await admin.query('INSERT INTO memory_chunks(tenant_id,revision_id,ordinal,locator,sanitized_text,embedding,embedding_model) VALUES($1,$2,1,\'/rules/1/statement\',$3,$4::vector,$5)', [fixture.principal.tenantId, revisionId, 'Legacy model vectors must not mix into current retrieval.', vectorSql, 'legacy-embedding-model']);
     return { artifactId, memoryId };
   }
   const ma = await memory(a, 'Only tenant A verified evidence.'), mb = await memory(b, 'Only tenant B private evidence.');
@@ -82,7 +83,7 @@ test('PostgreSQL pgvector/RLS/100-way quota concurrency/lease fencing integratio
   const rag = new RagService(requestDb, embedding, model, new CryptoBox(config.KEK_V1_BASE64), config);
   await t.test('FORCE RLS two-tenant read/write isolation and pooled context reset', async () => {
     const rows = await requestDb.transaction(a.principal, async (tx) => (await tx.query('SELECT sanitized_text FROM memory_chunks')).rows);
-    assert.deepEqual(rows.map((r) => r.sanitized_text), ['Only tenant A verified evidence.']);
+    assert.deepEqual(rows.map((r) => r.sanitized_text), ['Only tenant A verified evidence.', 'Legacy model vectors must not mix into current retrieval.']);
     await assert.rejects(requestDb.transaction(a.principal, async (tx) => { await tx.query("INSERT INTO memories(tenant_id,project_id,created_by) VALUES($1,$2,$3)", [b.principal.tenantId, b.projectId, a.principal.userId]); }));
     const cleared = await requestDb.transaction(null, async (tx) => (await tx.query('SELECT * FROM memory_chunks')).rows); assert.equal(cleared.length, 0);
     await assert.rejects(rag.recall(a.principal, { project_id: b.projectId, query: 'Private evidence' }), /Project is not permitted/);
