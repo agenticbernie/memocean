@@ -64,7 +64,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     return reply.code(201).send({ id, name: value.name });
   });
   app.post('/v1/tokens', async (req, reply) => reply.code(201).send(await auth.createPat(await auth.authenticate(req.headers.authorization), req.body)));
-  app.get('/v1/tokens', async (req) => { const p = await auth.authenticate(req.headers.authorization); requireScope(p, 'account:manage'); return db.transaction(p, async (tx) => ({ items: (await tx.query('SELECT id,name,prefix,scopes,project_ids,created_at,expires_at,revoked_at FROM api_keys WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100', [p.userId])).rows })); });
+  app.get('/v1/tokens', async (req) => { const p = await auth.authenticate(req.headers.authorization); requireScope(p, 'account:manage'); return db.transaction(p, async (tx) => ({ items: (await tx.query('SELECT id,name,prefix,scopes,project_ids,created_at,expires_at,last_used_at,revoked_at FROM api_keys WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100', [p.userId])).rows })); });
   app.delete<{ Params: { id: string } }>('/v1/tokens/:id', async (req, reply) => { await auth.revokePat(await auth.authenticate(req.headers.authorization), uuid.parse(req.params.id)); return reply.code(204).send(); });
   app.post('/v1/drafts', async (req, reply) => reply.code(201).send(await drafts.create(await auth.authenticate(req.headers.authorization), req.body)));
   app.get<{ Params: { id: string } }>('/v1/drafts/:id', async (req) => drafts.get(await auth.authenticate(req.headers.authorization), uuid.parse(req.params.id)));

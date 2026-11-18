@@ -13,6 +13,20 @@ export interface Project {
   created_at: string;
 }
 
+export type TokenScope = 'memory:read' | 'memory:write' | 'capsule:query' | 'provenance:read';
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: TokenScope[];
+  project_ids: string[];
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
 export interface Citation {
   artifact_id: string;
   irys_tx_id: string;

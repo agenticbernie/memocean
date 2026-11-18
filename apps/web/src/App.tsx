@@ -3,11 +3,12 @@ import {
   Anchor, ArrowDownRight, ArrowRight, BookOpen, Check, CheckCircle2, ChevronDown, CircleHelp,
   Clock3, Compass, ExternalLink, FileCheck2, FileText, Fingerprint, Fish, Globe2, Layers3,
   LoaderCircle, LockKeyhole, LogOut, MessageCircle, Search, ShieldCheck, Sparkles, Wallet, Waves,
-  XCircle,
+  KeyRound, XCircle,
 } from 'lucide-react';
 import { useAccount, useConnect, usePublicClient, useSignMessage, useSwitchChain, useWriteContract } from 'wagmi';
 import { TransactionReceiptNotFoundError } from 'viem';
 import { api, API_BASE_URL, ApiError, userFacingError } from './api';
+import { DeveloperConsole } from './DeveloperConsole';
 import { dateBoundary, presentAnswer, purchasePresentation, remainingTrialQuestions, trialCanBeRequested } from './lib/domain';
 import { FUJI_CHAIN_ID, marketplaceAbi, marketplaceAbiAvailable, marketplaceAddress, marketplaceChainId } from './wallet';
 import type {
@@ -15,7 +16,7 @@ import type {
   JobStatus, Project, RecallItem, RecallResponse, Session,
 } from './types';
 
-type View = 'library' | 'distill' | 'ask' | 'capsules';
+type View = 'library' | 'distill' | 'ask' | 'capsules' | 'developer';
 type HealthInfo = {
   status: 'ready' | 'not_ready';
   database?: boolean;
@@ -43,6 +44,7 @@ const viewInfo: Record<View, { label: string; title: string; description: string
   distill: { label: 'Distill', title: 'Make the useful parts last', description: 'Review what leaves your machine and what becomes memory.' },
   ask: { label: 'Ask', title: 'Ask with receipts', description: 'Answers stay close to verified project evidence.' },
   capsules: { label: 'Capsules', title: 'A library, not a feed', description: 'Explore version-pinned knowledge with clear boundaries.' },
+  developer: { label: 'Developer', title: 'Developer Console', description: 'Create scoped access, configure the controlled MCP pilot, and manage project context.' },
 };
 
 function short(value: string, lead = 7, trail = 5): string {
@@ -317,24 +319,30 @@ function App() {
     if (token) await api<void>('/v1/auth/session', { token, method: 'DELETE' }).catch(() => undefined);
   }
 
-  async function createProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!session || !projectName.trim()) return;
+  async function createProjectWithName(name: string): Promise<boolean> {
+    if (!session || !name.trim()) return false;
     const generation = sessionGeneration.current;
     setProjectCreateBusy(true);
     setProjectError('');
     try {
-      const created = await api<Project>('/v1/projects', { token: session.token, body: { name: projectName.trim() } });
-      if (generation !== sessionGeneration.current) return;
+      const created = await api<Project>('/v1/projects', { token: session.token, body: { name: name.trim() } });
+      if (generation !== sessionGeneration.current) return false;
       setProjects((current) => [...current, created]);
       setSelectedProject(created.id);
-      setCreatingProject(false);
-      setProjectName('');
+      return true;
     } catch (error) {
-      if (generation !== sessionGeneration.current) return;
-      setProjectError(userFacingError(error));
+      if (generation === sessionGeneration.current) setProjectError(userFacingError(error));
+      return false;
     } finally {
       if (generation === sessionGeneration.current) setProjectCreateBusy(false);
+    }
+  }
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (await createProjectWithName(projectName)) {
+      setCreatingProject(false);
+      setProjectName('');
     }
   }
 
@@ -411,6 +419,7 @@ function App() {
     { id: 'distill' as const, icon: Sparkles },
     { id: 'ask' as const, icon: MessageCircle },
     { id: 'capsules' as const, icon: Layers3 },
+    { id: 'developer' as const, icon: KeyRound },
   ], []);
 
   const chainReady = marketplaceChainId === FUJI_CHAIN_ID;
@@ -551,6 +560,14 @@ function App() {
                 return next;
               });
             }}
+          />}
+          {view === 'developer' && <DeveloperConsole
+            session={activeSession}
+            projects={projects}
+            selectedProjectId={selectedProject}
+            projectsLoading={projectLoading}
+            onSelectProject={setSelectedProject}
+            onCreateProject={createProjectWithName}
           />}
 
           {health?.integrations && <p className="footer-note">Generation: {humanIntegration(health.integrations.generation)} · Embeddings: {humanIntegration(health.integrations.embeddings)} · Permanent storage: {humanStorage(health.integrations.permanent_storage)}. “Configured” is not a live-service verification.</p>}
