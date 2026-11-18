@@ -1,0 +1,13 @@
+{
+  "name": "@memocean/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "abi:generate": "forge build && node scripts/export-abi.mjs"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.4.0"
+  }
+}

@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: memocean-api
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @memocean/core build && pnpm --filter @memocean/api build
+    preDeployCommand: pnpm --filter @memocean/api db:migrate
+    startCommand: pnpm --filter @memocean/api start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24.22.1
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: WORKER_DATABASE_URL
+        sync: false
+      - key: ENABLE_WORKER
+        value: "false"
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: AUTH_DOMAIN
+        sync: false
+      - key: TOKEN_HASH_PEPPER
+        sync: false
+      - key: KEK_V1_BASE64
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-5-5
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: voyage-3.5-lite
+      - key: EMBEDDING_DIMENSIONS
+        value: "1024"
+      - key: AVALANCHE_RPC_URL
+        value: https://api.avax-test.network/ext/bc/C/rpc
+      - key: CHAIN_ID
+        value: "43113"
+      - key: MARKETPLACE_ADDRESS
+        sync: false
+      - key: CHAIN_CONFIRMATIONS
+        value: "3"
+      - key: JOB_CONCURRENCY
+        value: "2"
+
+  - type: web
+    name: memocean-web
+    runtime: static
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @memocean/core build && pnpm --filter @memocean/web build
+    staticPublishPath: apps/web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.1
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_CHAIN_ID
+        value: "43113"
+      - key: VITE_MARKETPLACE_ADDRESS
+        sync: false
+      - key: VITE_WALLETCONNECT_PROJECT_ID
+        sync: false
+      - key: VITE_AVALANCHE_RPC_URL
+        value: https://api.avax-test.network/ext/bc/C/rpc
+
+databases:
+  - name: memocean-db
+    region: singapore
+    plan: 0.1c-256mb
+    postgresMajorVersion: "18"
+    databaseName: memocean
+    user: memocean_bootstrap
+    ipAllowList: []

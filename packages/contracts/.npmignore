@@ -1,0 +1,7 @@
+src/
+test/
+scripts/
+foundry.toml
+node_modules/
+out/
+cache/
